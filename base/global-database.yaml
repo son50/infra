@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Aurora Global Database - Tokyo Secondary Cluster (Pilot Light DR)"
+
+Parameters:
+  GlobalClusterIdentifier:
+    Type: String
+    Default: "oy-global-cluster"
+    Description: "Global Database identifier"
+  SourceClusterIdentifier:
+    Type: String
+    Description: "Source Aurora Cluster ID (Seoul)"
+  VpcId:
+    Type: String
+    Description: "Tokyo VPC ID"
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: "Tokyo private subnet IDs (2 AZs)"
+  NodeSecurityGroup:
+    Type: String
+    Description: "Tokyo EKS node security group"
+  Environment:
+    Type: String
+    Default: "dev"
+    AllowedValues: ["dev", "staging", "prd"]
+
+Resources:
+  # ============================================================
+  # 보안 그룹 (도쿄)
+  # ============================================================
+
+  DBSecurityGroupTokyo:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "oy-data-${Environment}-sg-dr"
+      GroupDescription: "Allow EKS nodes to access DB (Tokyo DR)"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref NodeSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-data-${Environment}-sg-dr"
+
+  # ============================================================
+  # 서브넷 그룹 (도쿄)
+  # ============================================================
+
+  DBSubnetGroupTokyo:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "oy-db-${Environment}-subnet-group-dr"
+      DBSubnetGroupDescription: "DB subnet group for Tokyo DR"
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-db-${Environment}-subnet-group-dr"
+
+  # ============================================================
+  # Aurora Secondary Cluster (도쿄 읽기 전용)
+  # ============================================================
+
+  AuroraSecondaryCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Retain
+    Properties:
+      Engine: aurora-postgresql
+      EngineVersion: "15.8"
+      GlobalClusterIdentifier: !Ref GlobalClusterIdentifier
+      DBClusterIdentifier: !Sub "oy-db-${Environment}-cluster-dr"
+      DBSubnetGroupName: !Ref DBSubnetGroupTokyo
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroupTokyo
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-db-${Environment}-cluster-dr"
+
+  # Reader 인스턴스 (도쿄, 최소 1대 - Pilot Light)
+  AuroraSecondaryInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Retain
+    Properties:
+      DBInstanceIdentifier: !Sub "oy-db-${Environment}-reader-dr"
+      DBInstanceClass: db.t4g.medium
+      Engine: aurora-postgresql
+      DBClusterIdentifier: !Ref AuroraSecondaryCluster
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-db-${Environment}-reader-dr"
+
+Outputs:
+  SecondaryClusterEndpoint:
+    Description: "Tokyo Secondary Cluster Reader Endpoint"
+    Value: !GetAtt AuroraSecondaryCluster.Endpoint.Address
+  SecondaryClusterArn:
+    Description: "Tokyo Secondary Cluster ARN"
+    Value: !Sub "arn:aws:rds:ap-northeast-1:${AWS::AccountId}:cluster:oy-db-${Environment}-cluster-dr"
+  DBSecurityGroupId:
+    Description: "Tokyo DB Security Group ID"
+    Value: !Ref DBSecurityGroupTokyo

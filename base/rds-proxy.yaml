@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "RDS Proxy for Aurora PostgreSQL with connection pooling"
+
+Parameters:
+  DBClusterIdentifier:
+    Type: String
+    Description: "Aurora DB Cluster ID"
+
+  VpcId:
+    Type: String
+    Description: "VPC ID where proxy will be created"
+
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: "Private subnet IDs for RDS Proxy"
+
+  DBSecurityGroup:
+    Type: String
+    Description: "Security Group ID for database access"
+
+  DBSecretArn:
+    Type: String
+    Description: "Secrets Manager ARN from data-infra stack"
+
+Resources:
+
+  # 1. RDS Proxy용 IAM Role (Secrets Manager 접근 권한)
+  RDSProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${DBClusterIdentifier}-proxy-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${DBClusterIdentifier}-proxy-secrets-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Ref DBSecretArn
+
+  # 2. RDS Proxy 생성
+  RDSProxy:
+    Type: AWS::RDS::DBProxy
+    Properties:
+      DBProxyName: !Sub "${DBClusterIdentifier}-proxy"
+      EngineFamily: POSTGRESQL
+      Auth:
+        - AuthScheme: SECRETS
+          SecretArn: !Ref DBSecretArn
+          IAMAuth: DISABLED
+      RoleArn: !GetAtt RDSProxyRole.Arn
+      VpcSubnetIds: !Ref SubnetIds
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroup
+      RequireTLS: false
+      IdleClientTimeout: 1800
+      DebugLogging: true
+
+  # 3. RDS Proxy Target Group (Aurora 클러스터 연결)
+  ProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref RDSProxy
+      TargetGroupName: default
+      DBClusterIdentifiers:
+        - !Ref DBClusterIdentifier
+
+Outputs:
+  ProxyEndpoint:
+    Description: "RDS Proxy endpoint for application connection"
+    Value: !GetAtt RDSProxy.Endpoint
+    Export:
+      Name: !Sub "${AWS::StackName}-ProxyEndpoint"
+
+  ProxyArn:
+    Description: "RDS Proxy ARN"
+    Value: !GetAtt RDSProxy.DBProxyArn
+    Export:
+      Name: !Sub "${AWS::StackName}-ProxyArn"

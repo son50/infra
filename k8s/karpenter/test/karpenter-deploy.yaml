@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karpenter-force-test
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: karpenter-force-test
+  template:
+    metadata:
+      labels:
+        app: karpenter-force-test
+    spec:
+      # 핵심: Karpenter가 생성한 노드에만 배포되도록 강제함
+      # nodeSelector:
+      #   karpenter.sh/nodepool: default
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: inflate
+          image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
+          resources:
+            requests:
+              cpu: 1

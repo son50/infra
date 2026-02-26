@@ -1,0 +1,27 @@
+### NOTE: 김기수 수정 - 2024.09.17
+nodeSelector:
+  karpenter.sh/nodepool: monitoring
+
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "monitoring"
+    effect: "NoSchedule"
+###
+
+tempo:
+  search:
+    enabled: true
+  storage:
+    trace:
+      backend: local
+      block:
+        version: vParquet3
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+
+serviceGraph:
+  enabled: true
+reportingEnabled: true

@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: python-critical-ai-api-pdb
+  namespace: default # Deployment와 동일한 네임스페이스여야 합니다.
+spec:
+  # [핵심] 스팟 노드가 삭제되더라도 최소 1개의 파드는 항상 Ready 상태를 유지하도록 강제함
+  minAvailable: 1 
+  selector:
+    matchLabels:
+      app: python-critical-ai-api # Deployment의 labels와 정확히 일치해야 함

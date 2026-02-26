@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-critical-ai-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: python-critical-ai-api
+  template:
+    metadata:
+      labels:
+        app: python-critical-ai-api
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: critical-on-demand
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "critical"
+        effect: "NoSchedule"
+      containers:
+      - name: backend
+        # 나중에 실제 빌드된 이미지로 교체 (예: myrepo/python-critical-api:latest)
+        image: 843499162538.dkr.ecr.ap-northeast-2.amazonaws.com/oliveyoung-recommendation:latest
+        ports:
+        - containerPort: 8000
+        
+        # [추가] HPA 작동을 위한 리소스 할당량 설정
+        # HPA는 여기서 설정한 requests 값을 기준으로 사용량을 계산해 (예: 500m의 60% 사용 시 증설)
+        resources:
+          requests:
+            cpu: "800m"
+            memory: "1Gi"
+          limits:
+            cpu: "3000m"
+            memory: "2Gi"
+            
+        env:
+        - name: AWS_REGION
+          value: "ap-northeast-2"
+        - name: SAGEMAKER_ENDPOINT_NAME
+          value: "oliveyoung-recommendation-single"
+        - name: APP_ROLE
+          value: "critical-ai-api"
+        - name: LISTENER_ENABLED
+          value: "false"
+        
+        
+          
+        # --- Probe: AI 프록시용 설정 ---
+        # Python/FastAPI라면 실제 구현된 경로로 바꿔야 합니다.
+        # 만약 경로가 확실치 않다면 가장 안전한 tcpSocket 방식을 추천합니다.
+        readinessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 65
+          periodSeconds: 10
+          
+        livenessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 90
+          periodSeconds: 20

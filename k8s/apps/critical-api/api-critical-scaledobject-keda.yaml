@@ -1,0 +1,49 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: spring-critical-api-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: spring-critical-api # 조절할 Deployment 이름
+  pollingInterval: 5          # 15초보다 조금 더 민첩하게 체크
+  cooldownPeriod: 60           # 테스트 종료 후 너무 빨리 노드가 사라지지 않게 1분 유지
+  minReplicaCount: 3        # 평소 최소 2개 유지 (API 서버이므로 0은 위험)
+  maxReplicaCount: 50 #150        # 이벤트 피크 대비 최대치
+
+  # [HPA 고급 설정] 스케일 다운 속도 조절
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+      # [추가] 부하 감지 시 파드를 순식간에 뻥튀기하는 설정
+        scaleUp:
+          stabilizationWindowSeconds: 0 
+          policies:
+          - type: Percent
+            value: 100         # 현재 파드 수의 100%씩 증설 (3 -> 6 -> 12 -> 24)
+            periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 60 #300 
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+
+  triggers:
+  # 1. [평상시] CPU 사용률 기반 (HPA 역할 대체)
+  - type: cpu
+    metricType: Utilization # Allowed types are 'Utilization' or 'AverageValue'
+    metadata:
+      value: "60"
+        
+  - type: memory  
+    metricType: Utilization # Allowed types are 'Utilization' or 'AverageValue'
+    metadata:
+      value: "80"
+
+  - type: cron
+    metadata:
+      timezone: Asia/Seoul
+      start: 33 03 18 2 * # 13:30 시작 (API보다 10분 빠름)
+      end: 38 03 18 2 * # 13:45 종료 (API가 안착하면 퇴장)
+      desiredReplicas: "15" 

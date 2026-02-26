@@ -1,0 +1,120 @@
+image: amazon/aws-cli:latest
+
+before_script:
+  - yum install -y jq kubectl
+
+stages:
+  - validate
+  - deploy-data
+  - deploy-proxy
+  - create-secrets
+  - setup-backup
+  - setup-dr
+
+# ============================
+# 템플릿 검증 (모든 브랜치)
+# ============================
+
+validate-templates:
+  stage: validate
+  script:
+    - aws cloudformation validate-template --template-body file://base/data-infra.yaml --region ap-northeast-2
+    - aws cloudformation validate-template --template-body file://base/rds-proxy.yaml --region ap-northeast-2
+    - aws cloudformation validate-template --template-body file://base/backup-policy.yaml --region ap-northeast-2
+    - aws cloudformation validate-template --template-body file://base/global-database.yaml --region ap-northeast-1
+    - aws cloudformation validate-template --template-body file://base/dr-failover-infra.yaml --region ap-northeast-1
+  only:
+    changes:
+      - base/**
+
+# ============================
+# DEV 환경 (develop 브랜치 → 자동 배포)
+# ============================
+
+deploy-data-dev:
+  stage: deploy-data
+  script:
+    - chmod +x scripts/seoul/deploy-data.sh
+    - scripts/seoul/deploy-data.sh dev
+  only:
+    - develop
+
+deploy-proxy-dev:
+  stage: deploy-proxy
+  script:
+    - chmod +x scripts/seoul/deploy-proxy.sh
+    - scripts/seoul/deploy-proxy.sh dev
+  needs: ["deploy-data-dev"]
+  only:
+    - develop
+
+create-secrets-dev:
+  stage: create-secrets
+  script:
+    - chmod +x scripts/seoul/create-k8s-secrets.sh
+    - scripts/seoul/create-k8s-secrets.sh dev
+  needs: ["deploy-proxy-dev"]
+  only:
+    - develop
+
+setup-backup-dev:
+  stage: setup-backup
+  script:
+    - chmod +x scripts/backup/setup-backup.sh
+    - scripts/backup/setup-backup.sh dev
+  needs: ["create-secrets-dev"]
+  only:
+    - develop
+
+# ============================
+# PRD 환경 (main 브랜치 → 수동 승인)
+# ============================
+
+deploy-data-prd:
+  stage: deploy-data
+  script:
+    - chmod +x scripts/seoul/deploy-data.sh
+    - scripts/seoul/deploy-data.sh prd
+  when: manual
+  only:
+    - main
+
+deploy-proxy-prd:
+  stage: deploy-proxy
+  script:
+    - chmod +x scripts/seoul/deploy-proxy.sh
+    - scripts/seoul/deploy-proxy.sh prd
+  when: manual
+  needs: ["deploy-data-prd"]
+  only:
+    - main
+
+create-secrets-prd:
+  stage: create-secrets
+  script:
+    - chmod +x scripts/seoul/create-k8s-secrets.sh
+    - scripts/seoul/create-k8s-secrets.sh prd
+  when: manual
+  needs: ["deploy-proxy-prd"]
+  only:
+    - main
+
+setup-backup-prd:
+  stage: setup-backup
+  script:
+    - chmod +x scripts/backup/setup-backup.sh
+    - scripts/backup/setup-backup.sh prd
+  when: manual
+  needs: ["create-secrets-prd"]
+  only:
+    - main
+
+setup-dr-prd:
+  stage: setup-dr
+  script:
+    - chmod +x scripts/dr/setup-pilot-light.sh
+    - scripts/dr/setup-pilot-light.sh prd
+  when: manual
+  needs: ["setup-backup-prd"]
+  only:
+    - main

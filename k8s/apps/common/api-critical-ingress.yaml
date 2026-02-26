@@ -1,0 +1,65 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spring-backend-api-ingress
+  annotations:
+    # ALB 타입 지정
+    # CloudFront 전용 Origin ALB (인터넷 노출이지만 SG로 CloudFront 만 허용)
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # ALB 타입 (Application Load Balancer)
+    alb.ingress.kubernetes.io/load-balancer-type: application
+    # 타겟 타입 (IP 모드)
+    alb.ingress.kubernetes.io/target-type: ip
+    # Health Check 경로 (CloudFront → ALB)
+    # ALB가 상태 확인을 위해 사용할 프로토콜 (HTTP 사용)
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    # 실제 스프링 부트 앱이 떠 있는 내부 포트 (8080)
+    alb.ingress.kubernetes.io/healthcheck-port: "8080"
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "3"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "4"
+    
+    # HTTPS 인증서 연결
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-northeast-2:843499162538:certificate/5f91edc0-0230-4ec3-94fc-9edf57aba9f2"
+
+    # HTTPS 를 Origin 에서 종료하지 않고 CloudFront 에서만 사용하려면
+    # ssl-redirect / certificate-arn / listen-ports 설정은 생략 (기본 HTTP:80 사용)
+    # 로그 활성화
+    # alb.ingress.kubernetes.io/load-balancer-attributes: access_logs.s3.enabled=true,access_logs.s3.bucket=your-alb-logs-bucket
+spec:
+  ingressClassName: alb
+  rules:
+    - host: api.olive0.store  # 공통 도메인
+      http:
+        paths:
+          
+          # 서브 API (sub-api)
+          - path: /api/v1/sub
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-sub-api-service
+                port:
+                  number: 80
+
+          # 챗봇 채팅 API
+          - path: /api/v1/chat
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-sub-ai-api-service
+                port:
+                  number: 80
+
+          # 메인 상품/주요 API (critical)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-critical-api-service
+                port:
+                  number: 80

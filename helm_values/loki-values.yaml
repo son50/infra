@@ -1,0 +1,46 @@
+deploymentMode: SingleBinary
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  useTestSchema: true
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: "gp2"
+  
+  ### NOTE: 김기수 수정 - 2024.09.17
+  nodeSelector:
+    karpenter.sh/nodepool: monitoring
+  
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "monitoring"
+      effect: "NoSchedule"
+  ###
+
+# 자원 절약(17개 포드 제한 대비)을 위한 비활성화 옵션들
+resultsCache:
+  enabled: false
+chunksCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+gateway:
+  enabled: false
+
+# 복제본 수 0으로 고정 (Single Binary 모드 전용)
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0

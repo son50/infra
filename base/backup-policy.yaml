@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AWS Backup Policy for Aurora (Daily/Weekly/Monthly + Cross-Region Copy)"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: "dev"
+    AllowedValues: ["dev", "staging", "prd"]
+  AuroraClusterArn:
+    Type: String
+    Description: "Aurora Cluster ARN to backup"
+  DRRegion:
+    Type: String
+    Default: "ap-northeast-1"
+    Description: "DR region for cross-region copy (default: Tokyo)"
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, "prd"]
+
+Resources:
+  # ============================================================
+  # Backup Vault (백업 저장소)
+  # ============================================================
+
+  BackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: !Sub "oy-backup-vault-${Environment}"
+
+  # ============================================================
+  # Backup Plan (일일/주간/월간 스케줄)
+  # ============================================================
+
+  BackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub "oy-backup-plan-${Environment}"
+        BackupPlanRule:
+          # 일일 백업: 매일 새벽 3시 (KST), 7일 보관
+          - RuleName: DailyBackup
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: "cron(0 18 * * ? *)" # UTC 18:00 = KST 03:00
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: 7
+
+          # 주간 백업: 매주 일요일 새벽 4시 (KST), 30일 보관
+          - RuleName: WeeklyBackup
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: "cron(0 19 ? * SUN *)" # UTC 19:00 = KST 04:00
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: 30
+            CopyActions:
+              - !If
+                - IsProd
+                - DestinationBackupVaultArn: !Sub "arn:aws:backup:${DRRegion}:${AWS::AccountId}:backup-vault:oy-backup-vault-${Environment}-dr"
+                  Lifecycle:
+                    DeleteAfterDays: 30
+                - !Ref "AWS::NoValue"
+
+          # 월간 백업: 매월 1일 새벽 5시 (KST), 365일 보관
+          - RuleName: MonthlyBackup
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: "cron(0 20 1 * ? *)" # UTC 20:00 = KST 05:00
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: 365
+
+  # ============================================================
+  # Backup Selection (Aurora 클러스터 지정)
+  # ============================================================
+
+  BackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref BackupPlan
+      BackupSelection:
+        SelectionName: !Sub "oy-aurora-selection-${Environment}"
+        IamRoleArn: !GetAtt BackupRole.Arn
+        Resources:
+          - !Ref AuroraClusterArn
+
+  # ============================================================
+  # IAM Role for AWS Backup
+  # ============================================================
+
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "oy-backup-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+Outputs:
+  BackupVaultArn:
+    Description: "Backup Vault ARN"
+    Value: !GetAtt BackupVault.BackupVaultArn
+  BackupPlanId:
+    Description: "Backup Plan ID"
+    Value: !Ref BackupPlan

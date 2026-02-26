@@ -1,0 +1,50 @@
+# 로그 집계, 배치 작업, 실시간으로 처리하지 않고, 일정한 양을 모아서 한꺼번에 처리하는 방식 등 가용성이 낮아도 되는 워크로드를 위한 NodePool 
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: batch-spot
+spec:
+  template:
+    metadata:
+      labels:
+        workload: batch
+        capacity: spot
+    spec:
+      # 노드에 taint를 추가하여 특정 워크로드만 스케줄링되도록 합니다
+      taints:
+        - key: workload
+          value: batch
+          effect: NoSchedule
+
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"] # 👈 AMD(x86_64)로 고정
+
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["c","m"]
+          #values: ["c", "t"] 
+        - key: karpenter.k8s.aws/instance-size
+          operator: In
+          values: ["large"] 
+          #values: ["medium", "large"] 
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["2"] # 가성비 좋은 4세대 이후 모델
+          #values: ["3"]
+
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m #2m
+
+  limits:
+    cpu: 500 

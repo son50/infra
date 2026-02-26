@@ -1,0 +1,42 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: spring-sub-api-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: spring-sub-api # Deployment 이름과 정확히 일치
+  pollingInterval: 15
+  cooldownPeriod: 300
+  minReplicaCount: 2
+  maxReplicaCount: 20 # 이벤트 시 최대치를 고려하여 5 -> 20으로 상향 제안
+
+  # [HPA 설정 이식]
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 15 # 5분 대기
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+
+  triggers:
+    # 1. [평상시 부하] CPU 사용률 60% 기준 (일반적인 API 서버 표준)
+  - type: cpu
+    metricType: Utilization # Allowed types are 'Utilization' or 'AverageValue'
+    metadata:
+      value: "70"
+        
+  - type: memory  
+    metricType: Utilization # Allowed types are 'Utilization' or 'AverageValue'
+    metadata:
+      value: "80"
+
+  - type: cron
+    metadata:
+      timezone: Asia/Seoul
+      start: 33 03 18 2 * # 13:30 시작 (API보다 10분 빠름)
+      end: 38 03 18 2 * # 13:45 종료 (API가 안착하면 퇴장)
+      desiredReplicas: "10" # 10

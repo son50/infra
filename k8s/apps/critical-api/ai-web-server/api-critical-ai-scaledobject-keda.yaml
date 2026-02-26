@@ -1,0 +1,42 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: python-critical-ai-api-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: python-critical-ai-api # 조절할 Deployment 이름
+  pollingInterval: 15        # 트리거 체크 주기 (15초)
+  cooldownPeriod: 15 #300         # 부하가 사라져도 5분간 유지 (안정성)
+  minReplicaCount: 3          # 평소 최소 2개 유지 (API 서버이므로 0은 위험)
+  maxReplicaCount: 30 #150        # 이벤트 피크 대비 최대치
+
+  # [HPA 고급 설정] 스케일 다운 속도 조절
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 15 #300 
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+
+  triggers:
+  # 1. [평상시] CPU 사용률 기반 (HPA 역할 대체)
+  - type: cpu
+    metricType: Utilization # Allowed types are 'Utilization' or 'AverageValue'
+    metadata:
+      value: "60"
+        
+  - type: memory  
+    metricType: Utilization # Allowed types are 'Utilization' or 'AverageValue'
+    metadata:
+      value: "80"
+
+  - type: cron
+    metadata:
+      timezone: Asia/Seoul
+      start: 33 03 18 2 * # 13:30 시작 (API보다 10분 빠름)
+      end: 38 03 18 2 * # 13:45 종료 (API가 안착하면 퇴장)
+      desiredReplicas: "15" 

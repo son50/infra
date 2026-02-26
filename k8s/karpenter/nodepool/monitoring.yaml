@@ -1,0 +1,50 @@
+# monitoring.yaml spot으로 구성!(pvc가 있기 때문에)
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: monitoring # 이름을 spot으로 명확히 구분
+spec:
+  template:
+    metadata:
+      labels:
+        workload: monitoring
+        capacity: spot # 라벨도 spot으로 변경
+    spec:
+      taints:
+        - key: workload
+          value: monitoring
+          effect: NoSchedule
+
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"] # Spot 인스턴스 사용
+
+        - key: karpenter.k8s.aws/instance-size
+          operator: In
+          values: ["medium"] # 👈 xlarge 이상은 너무 비싸니 이 정도로 제한
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["t"] 
+          #values: ["m", "r"] # 👈 모니터링은 메모리가 중요하니 c는 제외 추천
+
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["2"] # 가성비 좋은 4세대 이후 모델
+          #values: ["4"] # 가성비 좋은 4세대 이후 모델
+
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+
+  limits:
+    cpu: 500

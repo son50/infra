@@ -1,0 +1,10 @@
+# 노드 선택 설정: monitoring 노드풀로 지정
+nodeSelector:
+  karpenter.sh/nodepool: monitoring
+
+# 테인트 허용 설정: monitoring 노드의 NoSchedule 설정을 통과
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "monitoring"
+    effect: "NoSchedule"

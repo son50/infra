@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keda-test
+---
+# 1. 대상 애플리케이션 (SQS 메시지를 처리할 Worker)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  namespace: keda-test
+spec:
+  replicas: 0 # 테스트를 위해 처음엔 0으로 시작 (KEDA가 늘려주는지 확인)
+  selector:
+    matchLabels:
+      app: nginx-worker
+  template:
+    metadata:
+      labels:
+        app: nginx-worker
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+---
+# 2. KEDA 인증 설정 (Pod Identity 사용)
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-trigger-auth-aws-credentials
+  namespace: keda-test
+spec:
+  # Pod Identity를 사용하므로 provider만 aws로 지정하면 됩니다.
+  podIdentity:
+    provider: aws
+---
+# 3. SQS 기반 오토스케일링 설정 (ScaledObject)
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: aws-sqs-queue-scaledobject
+  namespace: keda-test
+spec:
+  scaleTargetRef:
+    name: nginx-deployment # 위에서 만든 Deployment 이름
+  pollingInterval: 5  # SQS를 확인하는 주기 (초)
+  cooldownPeriod:  300 # 메시지가 없어진 후 다시 0으로 줄어들 때까지 대기 시간 (초)
+  minReplicaCount: 0   # 메시지 없으면 파드 0개
+  maxReplicaCount: 5   # 최대 5개까지 확장
+  triggers:
+  - type: aws-sqs-queue
+    authenticationRef:
+      name: keda-trigger-auth-aws-credentials
+    metadata:
+      # 실제 생성한 SQS URL로 수정하세요 (중요!)
+      queueURL: https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-default-queue
+      queueLength: "5"           # 메시지 5개당 파드 1개씩 추가
+      awsRegion: "ap-northeast-2" # 클러스터 리전

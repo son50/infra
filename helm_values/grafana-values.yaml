@@ -1,0 +1,16 @@
+# 기존 설정 유지
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClassName: gp2
+  type: pvc
+
+# 이사 설정 추가
+nodeSelector:
+  karpenter.sh/nodepool: monitoring
+
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "monitoring"
+    effect: "NoSchedule"

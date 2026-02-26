@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-sub-api
+  labels:
+    app: spring-sub-api
+spec:
+  replicas: 2 # 일반 조회용은 가용성을 위해 최소 2개 추천
+  selector:
+    matchLabels:
+      app: spring-sub-api
+  template:
+    metadata:
+      labels:
+        app: spring-sub-api
+    spec:
+      # nodeSelector:
+      #   karpenter.sh/nodepool: api-spot 
+      
+      # tolerations:
+      # - key: "workload"
+      #   operator: "Equal"
+      #   value: "api-spot"
+      #   effect: "NoSchedule"
+      nodeSelector:
+        karpenter.sh/nodepool: critical-on-demand
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "critical"
+        effect: "NoSchedule"
+
+
+      containers:
+      - name: backend
+         # 나중에 실제 빌드된 이미지로 교체 (예: myrepo/spring-critical-api:latest)
+        image: 843499162538.dkr.ecr.ap-northeast-2.amazonaws.com/prd-oy-ecr-backend-01:dfff2aa8
+        
+        # [일반 API 리소스] 
+        # AI보다 가볍지만, 상품 조회가 몰릴 것을 대비해 메모리는 1Gi 유지
+        resources:
+          requests:
+            cpu: "50m"     # AI(500m)보다 낮게 설정하여 노드 효율 증대
+            memory: "400Mi"   # AI(512Mi)보다 낮게 설정하여 노드 효율 증대
+          limits:
+            cpu: "300m"
+            memory: "512Mi"
+
+        env:
+        - name: APP_ROLE
+          value: "sub-api"   # 일반 서브 API 역할
+        - name: SPRING_PROFILES_ACTIVE
+          value: "sub-api"   # 일반 비즈니스 로직 프로필 활성화
+        - name: LISTENER_ENABLED
+          value: "false"
+        - name: SQS_CRITICAL_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-critical-queue.fifo"
+        - name: SQS_DEFAULT_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-default-queue"
+        - name: SQS_AI_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-ai-queue"
+
+         # 기존 인프라 접속 설정 (동일하게 유지)
+        - name: DB_PRIMARY_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: primary_host } }
+        - name: DB_REPLICA_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: replica_host } }
+        - name: DB_PORT
+          valueFrom: { secretKeyRef: { name: db-credentials, key: port } }
+        - name: DB_NAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: database } }
+        - name: DB_USERNAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: username } }
+        - name: DB_PASSWORD
+          valueFrom: { secretKeyRef: { name: db-credentials, key: password } }
+        - name: REDIS_HOST
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: host } }
+        - name: REDIS_PORT
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: port } }
+        - name: JWT_SECRET
+          valueFrom: { secretKeyRef: { name: jwt-credentials, key: secret } }
+        - name: JPA_DDL_AUTO
+          valueFrom: { configMapKeyRef: { name: backend-config, key: JPA_DDL_AUTO } }
+        - name: JPA_SHOW_SQL
+          valueFrom: { configMapKeyRef: { name: backend-config, key: JPA_SHOW_SQL } }
+        - name: CORS_ALLOWED_ORIGINS
+          valueFrom: { configMapKeyRef: { name: backend-config, key: CORS_ALLOWED_ORIGINS } }
+
+        # [Health Check] 일반 API는 부팅이 빠르므로 대기 시간을 짧게 조정
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          failureThreshold: 30    # 10초씩 30번 = 300초(5분) 동안 시도
+          periodSeconds: 10       # 10초 간격으로 체크
+          
+        readinessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 65 # AI(60s)보다 빠른 투입 가능
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 90
+          periodSeconds: 15

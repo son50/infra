@@ -1,0 +1,35 @@
+# helm 로드 밸런서 컨트롤러 커스텀으로 설치하기
+# ALB Ingress Controller values for Helm chart (헬름 업그레이드로 커스텀 노드 그룹에 적용 가능(노드 그룹 만들기 -> 이 노드 그룹으로 옮기는 작업))
+
+clusterName: prd-oy-eks-cluster-01
+region: ap-northeast-2
+serviceAccount:
+  create: false
+  name: aws-load-balancer-controller
+vpcId: vpc-094d001d536dc5224
+
+replicaCount: 2
+# 2. 위치 고정 (MNG 노드로만 가기)
+nodeSelector:
+  eks.amazonaws.com/nodegroup: "eks-core-mng"
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    # 1순위: 노드 이름이 다르면 무조건 찢어라 (한 노드에 2개 금지)
+    topologyKey: "kubernetes.io/hostname"
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: aws-load-balancer-controller
+  - maxSkew: 1
+    # 2순위: 가능하다면 AZ도 다르게 해라
+    topologyKey: "topology.kubernetes.io/zone"
+    whenUnsatisfiable: ScheduleAnyway # 혹은 DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: aws-load-balancer-controller
+
+# 제 커스텀으로 재 적용 파일 입니다 
+#helm upgrade aws-load-balancer-controller eks/aws-load-balancer-controller \
+#  -n kube-system \
+#  -f alb-values.yaml

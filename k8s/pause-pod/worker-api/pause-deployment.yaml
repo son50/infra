@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pause-pod-warmer-worker
+  namespace: default
+spec:
+  replicas: 2 # 평소에는 2개만 띄워 노드 자리 확보
+  selector:
+    matchLabels:
+      app: pause-warmer-worker
+  template:
+    metadata:
+      labels:
+        app: pause-warmer-worker
+    spec:
+      # 노드 타입이 달라도 골고루 퍼지게 함
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: pause-warmer-worker
+      # [배치] 배치 전용 스팟 노드풀 사용
+      nodeSelector:
+        karpenter.sh/nodepool: batch-spot
+      # [허가증] batch-spot 노드와 workload=batch 테인트를 통과하기 위한 설정
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "batch" 
+        effect: "NoSchedule"
+      priorityClassName: pause-pod-priority # 위에서 만든 낮은 우선순위 적용
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+        resources:
+          requests:
+            cpu: "1000m"  # 진짜 API와 동일하게 설정 (자릿세)
+            memory: "1Gi"

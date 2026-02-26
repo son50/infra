@@ -1,0 +1,62 @@
+#version 2.0.2
+
+
+# cost-analyzer (메인 파드)
+nodeSelector:
+    karpenter.sh/nodepool: monitoring
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "monitoring"
+    effect: "NoSchedule"
+
+kubecostModel:
+  nodeSelector:
+    karpenter.sh/nodepool: monitoring
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "monitoring"
+      effect: "NoSchedule"
+
+forecasting:
+  nodeSelector:
+    karpenter.sh/nodepool: monitoring
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "monitoring"
+      effect: "NoSchedule"
+
+prometheus:
+  enabled: true
+  server:
+    enabled: true
+    nodeSelector:
+      karpenter.sh/nodepool: monitoring
+    tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "monitoring"
+        effect: "NoSchedule"
+
+
+grafana:
+  enabled: true
+  nodeSelector:
+    karpenter.sh/nodepool: monitoring
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "monitoring"
+      effect: "NoSchedule"
+
+
+global:
+  nodeSelector:
+    karpenter.sh/nodepool: monitoring
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "monitoring"
+      effect: "NoSchedule"

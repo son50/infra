@@ -1,0 +1,41 @@
+### api spot test ###
+# nodeSelector:
+#   workload: api
+#   capacity: spot
+# tolerations:
+#   - key: workload
+#     operator: Equal
+#     value: api-spot
+#     effect: NoSchedule
+
+### batch test ### 
+# nodeSelector:
+#   workload: batch
+#   capacity: spot
+# tolerations:
+#   - key: workload
+#     operator: Equal
+#     value: batch
+#     effect: NoSchedule
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-api-on-demand
+spec:
+  nodeSelector:
+    workload: api
+    capacity: on-demand
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: api-on-demand
+      effect: NoSchedule
+  containers:
+    - name: nginx
+      image: nginx
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "512Mi"
+

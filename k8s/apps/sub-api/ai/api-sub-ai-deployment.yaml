@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-sub-ai-api  # 이름을 AI 전용으로 변경
+  labels:
+    app: spring-sub-ai-api
+spec:
+  replicas: 2 
+  selector:
+    matchLabels:
+      app: spring-sub-ai-api
+  template:
+    metadata:
+      labels:
+        app: spring-sub-ai-api
+    spec:
+      # # [노드 배치] 동일하게 api-spot 노드풀 사용
+      # nodeSelector:
+      #   karpenter.sh/nodepool: api-spot 
+      
+      # # [허가증] api-spot 노드의 Taint 통과
+      # tolerations:
+      # - key: "workload"
+      #   operator: "Equal"
+      #   value: "api-spot"
+      #   effect: "NoSchedule"
+      nodeSelector:
+        karpenter.sh/nodepool: critical-on-demand
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "critical"
+        effect: "NoSchedule"
+
+      containers:
+      - name: backend
+         # 나중에 실제 빌드된 이미지로 교체 (예: myrepo/spring-critical-api:latest)
+        image: 843499162538.dkr.ecr.ap-northeast-2.amazonaws.com/prd-oy-ecr-backend-01:dfff2aa8
+        # [AI 최적화 리소스] 
+        # AI 연산은 일시적으로 CPU를 많이 쓰므로 limits를 좀 더 넉넉히 잡았습니다.
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "400Mi"
+          limits:
+            cpu: "300m"    
+            memory: "500Mi"
+
+        env:
+        # [핵심] 역할 및 프로필 분리
+        - name: APP_ROLE
+          value: "sub-ai-api" # AI 서버임을 명시
+        - name: SPRING_PROFILES_ACTIVE
+          value: "sub-ai-api"        # AI 관련 Bean들만 활성화하는 프로필 (기존 sub-api에서 분리 추천)
+        - name: LISTENER_ENABLED
+          value: "false"
+        - name: SQS_CRITICAL_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-critical-queue.fifo"
+        - name: SQS_DEFAULT_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-default-queue"
+        - name: SQS_AI_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-ai-queue"
+
+        # 기존 인프라 접속 설정 (동일하게 유지)
+        - name: DB_PRIMARY_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: primary_host } }
+        - name: DB_REPLICA_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: replica_host } }
+        - name: DB_PORT
+          valueFrom: { secretKeyRef: { name: db-credentials, key: port } }
+        - name: DB_NAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: database } }
+        - name: DB_USERNAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: username } }
+        - name: DB_PASSWORD
+          valueFrom: { secretKeyRef: { name: db-credentials, key: password } }
+
+
+        - name: REDIS_HOST
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: host } }
+        - name: REDIS_PORT
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: port } }
+        - name: JWT_SECRET
+          valueFrom: { secretKeyRef: { name: jwt-credentials, key: secret } }
+        - name: JPA_DDL_AUTO
+          valueFrom: { configMapKeyRef: { name: backend-config, key: JPA_DDL_AUTO } }
+        - name: JPA_SHOW_SQL
+          valueFrom: { configMapKeyRef: { name: backend-config, key: JPA_SHOW_SQL } }
+        - name: CORS_ALLOWED_ORIGINS
+          valueFrom: { configMapKeyRef: { name: backend-config, key: CORS_ALLOWED_ORIGINS } }
+
+        - name: VECTOR_REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: vector-redis-credentials
+              key: host
+
+        - name: VECTOR_REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: vector-redis-credentials
+              key: port
+
+        - name: SEMANTIC_CACHE_ENABLED
+          value: "true"
+
+
+        # [Health Check] AI 모델 로딩 시간을 고려하여 initialDelay 유지
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          failureThreshold: 30    # 10초씩 30번 = 300초(5분) 동안 시도
+          periodSeconds: 10       # 10초 간격으로 체크
+          
+        readinessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 65 # AI 모델 초기화 시간을 위해 15초 더 연장
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 90
+          periodSeconds: 15

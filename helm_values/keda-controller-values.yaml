@@ -1,0 +1,25 @@
+# 1. KEDA 오퍼레이터 (두뇌)
+operator:
+  replicaCount: 2
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: "eks-core-mng"
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: "topology.kubernetes.io/zone"
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: keda-operator
+
+# 2. 메트릭 서버 (눈)
+metricsServer:
+  replicaCount: 2
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: "eks-core-mng"
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: "topology.kubernetes.io/zone"
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app: keda-operator-metrics-apiserver

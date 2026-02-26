@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-worker
+  labels:
+    app: spring-worker
+spec:
+  # 초기값은 0으로 설정해도 됨 (KEDA가 메시지를 감지하면 자동으로 늘림)
+  replicas: 0 
+  selector:
+    matchLabels:
+      app: spring-worker
+  template:
+    metadata:
+      labels:
+        app: spring-worker
+    spec:
+      # [배치] 배치 전용 스팟 노드풀 사용
+      nodeSelector:
+        karpenter.sh/nodepool: batch-spot
+      
+      # [허가증] batch-spot 노드와 workload=batch 테인트를 통과하기 위한 설정
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "batch" 
+        effect: "NoSchedule"
+
+      containers:
+      - name: backend
+         # 나중에 실제 빌드된 이미지로 교체 (예: myrepo/spring-critical-api:latest)
+        image: 843499162538.dkr.ecr.ap-northeast-2.amazonaws.com/prd-oy-ecr-backend-01:dfff2aa8
+        
+        # 부족하면 KEDA가 파드 개수를 늘리는(Scale-out) 방식이 더 경제적입니
+        resources:
+          requests:
+            cpu: "1000m" #50
+            memory: "1Gi"
+          limits:
+            cpu: "3000m"
+            memory: "2Gi"
+
+        env:
+        - name: APP_ROLE
+          value: "worker" # 일꾼 역할 부여 (이걸로 스프링 리스너가 작동함)
+        - name: SPRING_PROFILES_ACTIVE
+          value: "worker"
+        - name: LISTENER_ENABLED
+          value: "true"   # SQS 리스너 활성화
+        - name: SQS_CRITICAL_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-critical-queue.fifo"
+        - name: SQS_DEFAULT_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-default-queue"
+        - name: SQS_AI_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-ai-queue"
+        
+        # 인프라 접속 정보 (API와 동일하게 세팅해야 함)
+        - name: DB_PRIMARY_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: primary_host } }
+        - name: DB_REPLICA_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: replica_host } }
+        - name: DB_PORT
+          valueFrom: { secretKeyRef: { name: db-credentials, key: port } }
+        - name: DB_NAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: database } }
+        - name: DB_USERNAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: username } }
+        - name: DB_PASSWORD
+          valueFrom: { secretKeyRef: { name: db-credentials, key: password } }
+        - name: REDIS_HOST
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: host } }
+        - name: REDIS_PORT
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: port } }
+        - name: JWT_SECRET
+          valueFrom: { secretKeyRef: { name: jwt-credentials, key: secret } }
+
+        - name: VECTOR_REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: vector-redis-credentials
+              key: host
+
+        - name: VECTOR_REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: vector-redis-credentials
+              key: port
+
+        - name: SEMANTIC_CACHE_ENABLED
+          value: "true"
+
+        # --- Probe: 일꾼도 죽으면 다시 살려야 함 ---
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          failureThreshold: 30    # 10초씩 30번 = 300초(5분) 동안 시도
+          periodSeconds: 10       # 10초 간격으로 체크
+          
+        readinessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 30
+          periodSeconds: 15        # 더 자주 체크해서 (5초마다)
+          successThreshold: 1     # 1번만 성공하면 바로 투입 (기본값)
+          failureThreshold: 3
+        livenessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 40
+          periodSeconds: 15
+          successThreshold: 1     # 1번만 성공하면 바로 투입 (기본값)
+          failureThreshold: 3
+      terminationGracePeriodSeconds: 60

@@ -1,0 +1,7 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: pause-pod-priority
+value: -1000  # 마이너스 값으로 설정하여 최하위 우선순위 부여
+globalDefault: false
+description: "진짜 API 파드에게 자리를 양보하기 위한 예열용 파드 우선순위"

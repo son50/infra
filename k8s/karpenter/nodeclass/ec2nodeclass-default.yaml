@@ -1,0 +1,27 @@
+#EBS,IMDS,Subnet,SG을 담당
+
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  role: "KarpenterNodeRole-prd-oy-eks-cluster-01"
+  amiSelectorTerms:
+    - alias: "al2023@v20260209"
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "prd-oy-eks-cluster-01" 
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "prd-oy-eks-cluster-01" 
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required
+    httpPutResponseHopLimit: 2
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 50Gi
+        volumeType: gp3
+        encrypted: true

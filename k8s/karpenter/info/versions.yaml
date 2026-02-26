@@ -1,0 +1,7 @@
+# 제가 사용한 쿠버네티스 버전과 karpenter 버전과 nampespace를 정의합니다
+kubernetes:
+  version: "1.34"
+
+karpenter:
+  version: "1.9.0"
+  namespace: kube-system

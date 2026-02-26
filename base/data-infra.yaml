@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Olive Young Chatbot Data Infra (Aurora + Redis + AutoScaling Reader)"
+
+Parameters:
+  VpcId:
+    Type: String
+  NodeSecurityGroup:
+    Type: String
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: "Existing private subnet IDs (2 AZs)"
+  Environment:
+    Type: String
+    Default: "dev"
+    AllowedValues: ["dev", "staging", "prd"]
+
+Resources:
+  # ============================================================
+  # Secrets Manager: DB 비밀번호 자동 생성
+  # ============================================================
+
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "oy-db-${Environment}-secret"
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "postgres"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  # ============================================================
+  # 보안 그룹: EKS 노드 → DB(5432), Redis(6379) 허용
+  # ============================================================
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "oy-data-${Environment}-sg"
+      GroupDescription: "Allow EKS nodes to access DB and Redis"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref NodeSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref NodeSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-data-${Environment}-sg"
+
+  # ============================================================
+  # 서브넷 그룹 (기존 프라이빗 서브넷 사용)
+  # ============================================================
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "oy-db-${Environment}-subnet-group"
+      DBSubnetGroupDescription: "Subnet group for Aurora (existing private subnets)"
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-db-${Environment}-subnet-group"
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub "oy-redis-${Environment}-subnet-group"
+      Description: "Subnet group for Redis"
+      SubnetIds: !Ref SubnetIds
+
+  # ============================================================
+  # Aurora PostgreSQL 클러스터
+  # ============================================================
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Retain
+    Properties:
+      Engine: aurora-postgresql
+      EngineVersion: "15.8"
+      MasterUsername: !Sub "{{resolve:secretsmanager:${DBSecret}:SecretString:username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DBSecret}:SecretString:password}}"
+      DBClusterIdentifier: !Sub "oy-db-${Environment}-cluster"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroup
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-db-${Environment}-cluster"
+
+  # Writer 인스턴스
+  AuroraWriterInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Retain
+    Properties:
+      DBInstanceIdentifier: !Sub "oy-db-${Environment}-writer"
+      DBInstanceClass: db.t4g.medium
+      Engine: aurora-postgresql
+      DBClusterIdentifier: !Ref AuroraCluster
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-db-${Environment}-writer"
+
+  # ============================================================
+  # Aurora Auto Scaling (Reader 1~5대 자동 관리)
+  # ============================================================
+
+  AuroraScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: AuroraWriterInstance
+    Properties:
+      ServiceNamespace: rds
+      ResourceId: !Sub "cluster:${AuroraCluster}"
+      ScalableDimension: rds:cluster:ReadReplicaCount
+      MinCapacity: 1
+      MaxCapacity: 5
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/rds.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_RDSCluster"
+
+  AuroraScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub "oy-db-${Environment}-autoscaling-policy"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref AuroraScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: RDSReaderAverageCPUUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 300
+
+  # ============================================================
+  # ElastiCache Redis
+  # ============================================================
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      ClusterName: !Sub "oy-redis-${Environment}"
+      Engine: redis
+      CacheNodeType: cache.t4g.micro
+      NumCacheNodes: 1
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      VpcSecurityGroupIds:
+        - !GetAtt DBSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-redis-${Environment}"
+
+Outputs:
+  DBSecretArn:
+    Description: "Secrets Manager ARN"
+    Value: !Ref DBSecret
+  AuroraWriterEndpoint:
+    Description: "Aurora Writer 엔드포인트"
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+  AuroraReaderEndpoint:
+    Description: "Aurora Reader 엔드포인트 (Auto Scaling Reader들이 여기로 라우팅됨)"
+    Value: !GetAtt AuroraCluster.ReaderEndpoint.Address
+  RedisEndpoint:
+    Description: "Redis 엔드포인트"
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address

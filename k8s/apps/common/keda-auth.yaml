@@ -1,0 +1,9 @@
+# NOTE: KEDA가 AWS 자원(SQS)에 접근할 때 사용할 공통 신분증 설정입니다.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-aws-auth
+  namespace: default
+spec:
+  podIdentity:
+    provider: aws # EKS Pod Identity 

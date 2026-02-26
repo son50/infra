@@ -1,0 +1,20 @@
+alertmanager:
+  enabled: false
+
+pushgateway:
+  enabled: false
+
+server:
+  # 기존 설정 유지
+  persistentVolume:
+    size: 10Gi
+    storageClass: gp2
+  
+  # 이사 설정 추가
+  nodeSelector:
+    karpenter.sh/nodepool: monitoring
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "monitoring"
+      effect: "NoSchedule"

@@ -1,0 +1,86 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-sqs-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: spring-worker # Deployment 이름과 정확히 일치해야 함
+  pollingInterval: 15   # 15초마다 SQS 체크
+  cooldownPeriod: 60   # 메시지 고갈 후 5분간 유지 (빈번한 노드 생성/삭제 방지)
+  minReplicaCount: 2    # 일 없으면 0개로 비활성화
+  maxReplicaCount: 150   # 최대 10개까지 확장
+
+    # [HPA 고급 설정] 스케일 다운 속도 조절
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+      # [추가] 부하 감지 시 파드를 순식간에 뻥튀기하는 설정
+        scaleUp:
+          stabilizationWindowSeconds: 0 
+          policies:
+          - type: Percent
+            value: 100         # 현재 파드 수의 100%씩 증설 (3 -> 6 -> 12 -> 24)
+            periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 60 #300 
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+
+  triggers:
+    # ai 큐 - 메시지 1개만 있어도 바로 일꾼 투입 (실시간 처리)
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: keda-aws-auth # 👈 인증 참조 추가  
+      metadata:
+        queueURL: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-ai-queue"
+        queueLength: "10" 
+        awsRegion: "ap-northeast-2"
+        identityOwner: operator
+
+    #  리뷰 - 1개 쌓이면 파드 투입 (worker-default-queue)
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: keda-aws-auth # 👈 인증 참조 추가  
+      metadata:
+        queueURL: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-default-queue"
+        queueLength: "10" 
+        awsRegion: "ap-northeast-2"
+        identityOwner: operator
+
+    # # 결제 후 포인트 - 1개 쌓이면 파드 투입 (worker-critical-queue)
+    # - type: aws-sqs-queue
+    #   authenticationRef:
+    #     name: keda-aws-auth # 👈 인증 참조 추가  
+    #   metadata:
+    #     queueURL: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-critical-queue.fifo"
+    #     queueLength: "100" 
+    #     awsRegion: "ap-northeast-2"
+    #     identityOwner: operator
+
+### 백 예시 코드
+# @Component
+# @ConditionalOnProperty(name = "APP_ROLE", havingValue = "worker") // 일꾼 파드에서만 이 코드가 작동!
+# public class WorkerListener {
+
+#     // 1. 구매 큐 담당
+#     @SqsListener("worker-purchase-queue")
+#     public void handlePurchase(PurchaseMessage msg) {
+#         orderService.process(msg); // 실제 비즈니스 로직(함수)으로 토스!
+#     }
+
+#     // 2. 리뷰 큐 담당
+#     @SqsListener("worker-review-queue")
+#     public void handleReview(ReviewMessage msg) {
+#         reviewService.analyze(msg); // 리뷰 분석 함수로 토스!
+#     }
+
+#     // 3. 로그 큐 담당
+#     @SqsListener("worker-chat-log-queue")
+#     public void handleChatLog(LogMessage msg) {
+#         logService.saveAndCheckCoupon(msg); // 로그 저장 및 쿠폰 체크 함수로 토스!
+#     }
+# }
+###

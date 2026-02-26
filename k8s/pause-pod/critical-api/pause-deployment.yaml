@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pause-pod-warmer-critical
+  namespace: default
+spec:
+  replicas: 2 # 평소에는 5개만 띄워 노드 자리 확보
+  selector:
+    matchLabels:
+      app: pause-warmer-critical
+  template:
+    metadata:
+      labels:
+        app: pause-warmer-critical
+    spec:
+    # 노드 타입이 달라도 골고루 퍼지게 함
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: pause-warmer-critical
+      nodeSelector:
+        karpenter.sh/nodepool: critical-on-demand
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "critical"
+        effect: "NoSchedule"
+      priorityClassName: pause-pod-priority # 위에서 만든 낮은 우선순위 적용
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+        resources:
+          requests:
+            cpu: "1000m"  # 최소 노드 사양 
+            memory: "1Gi"

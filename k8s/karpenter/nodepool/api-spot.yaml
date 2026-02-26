@@ -1,0 +1,50 @@
+# 읽기 API, 비핵심 API 배치 작업을 위한 NodePool
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: api-spot
+spec:
+  template:
+    metadata:
+      labels:
+        workload: api
+        capacity: spot
+    spec:
+      # 노드에 taint를 추가하여 특정 워크로드만 스케줄링되도록 합니다
+      taints:
+        - key: workload
+          value: api-spot
+          effect: NoSchedule
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"] # 👈 AMD(x86_64)로 고정
+
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["t"]
+          #values: ["c","m"]
+        - key: karpenter.k8s.aws/instance-size
+          operator: In
+          values: ["small", "medium"] 
+          #values: ["large"] # 👈 너무 작지도 크지도 않은 적당한 사이즈
+        
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["2"] # 가성비 좋은 4세대 이후 모델
+          #values: ["3"]
+
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m #5m
+
+  limits:
+    cpu: 500

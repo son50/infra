@@ -1,0 +1,28 @@
+# KEDA Operator (두뇌)
+nodeSelector:
+  karpenter.sh/nodepool: critical-on-demand
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "critical"
+    effect: "NoSchedule"
+
+# Metrics Server (HPA 통신)
+metricsServer:
+  nodeSelector:
+    karpenter.sh/nodepool: critical-on-demand
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "critical"
+      effect: "NoSchedule"
+
+# Webhooks (설정 검증)
+webhooks:
+  nodeSelector:
+    karpenter.sh/nodepool: critical-on-demand
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "critical"
+      effect: "NoSchedule"

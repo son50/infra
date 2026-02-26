@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "DR Failover Infrastructure - Redis + RDS Proxy (Tokyo, deployed on failover)"
+
+Parameters:
+  VpcId:
+    Type: String
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: "Tokyo private subnet IDs"
+  DBSecurityGroup:
+    Type: String
+    Description: "Tokyo DB Security Group ID"
+  DBClusterIdentifier:
+    Type: String
+    Description: "Promoted Aurora Cluster ID (Tokyo)"
+  DBSecretArn:
+    Type: String
+    Description: "Secrets Manager ARN for DB credentials"
+  NodeSecurityGroup:
+    Type: String
+    Description: "Tokyo EKS node security group"
+  Environment:
+    Type: String
+    Default: "dev"
+
+Resources:
+
+  # ============================================================
+  # Redis (장애 시 도쿄에 새로 생성)
+  # ============================================================
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub "oy-redis-${Environment}-subnet-group-dr"
+      Description: "Subnet group for Redis (Tokyo DR)"
+      SubnetIds: !Ref SubnetIds
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "oy-redis-${Environment}-sg-dr"
+      GroupDescription: "Allow EKS nodes to access Redis (Tokyo DR)"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref NodeSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-redis-${Environment}-sg-dr"
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      ClusterName: !Sub "oy-redis-${Environment}-dr"
+      Engine: redis
+      CacheNodeType: cache.t4g.micro
+      NumCacheNodes: 1
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      VpcSecurityGroupIds:
+        - !GetAtt RedisSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub "oy-redis-${Environment}-dr"
+
+  # ============================================================
+  # RDS Proxy (장애 시 도쿄에 새로 생성)
+  # ============================================================
+
+  RDSProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${DBClusterIdentifier}-proxy-role-dr"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${DBClusterIdentifier}-proxy-secrets-policy-dr"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Ref DBSecretArn
+
+  RDSProxy:
+    Type: AWS::RDS::DBProxy
+    Properties:
+      DBProxyName: !Sub "${DBClusterIdentifier}-proxy-dr"
+      EngineFamily: POSTGRESQL
+      Auth:
+        - AuthScheme: SECRETS
+          SecretArn: !Ref DBSecretArn
+          IAMAuth: DISABLED
+      RoleArn: !GetAtt RDSProxyRole.Arn
+      VpcSubnetIds: !Ref SubnetIds
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroup
+      RequireTLS: false
+      IdleClientTimeout: 1800
+
+  ProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref RDSProxy
+      TargetGroupName: default
+      DBClusterIdentifiers:
+        - !Ref DBClusterIdentifier
+
+Outputs:
+  ProxyEndpoint:
+    Description: "DR RDS Proxy Endpoint"
+    Value: !GetAtt RDSProxy.Endpoint
+  RedisEndpoint:
+    Description: "DR Redis Endpoint"
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address

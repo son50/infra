@@ -1,0 +1,81 @@
+# 1. Falco 본체(DaemonSet) 및 기본 동작 설정
+# 모든 노드(MNG, Karpenter)에 설치되도록 Tolerations를 루트 레벨에 배치합니다.
+falco:
+  json_output: true
+  json_include_output_property: true
+  log_output: stdout
+
+# 2. 알람 및 외부 연동 설정 (Sidekick Deployment 전용)
+falcosidekick:
+  enabled: true
+  # Sidekick 파드가 뜰 위치를 지정합니다.
+  nodeSelector:
+    workload: critical
+    capacity: on-demand
+  # Sidekick 파드가 테인트를 통과할 수 있게 합니다.
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "critical"
+      effect: "NoSchedule"
+    - key: "node-role"
+      operator: "Equal"
+      value: "core"
+      effect: "NoSchedule"
+  config:
+    slack:
+      webhookurl: "https://hooks.slack.com/services/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"
+      minimumpriority: "warning"
+    loki:
+      hostport: "http://loki.monitoring.svc.cluster.local:3100"
+      minimumpriority: "notice"
+
+# 3. Falco 본체(DaemonSet) 노드 스케줄링 설정
+# Falco 본체는 모든 노드에 떠서 감시해야 하므로 MNG와 Karpenter 노드 모두를 허용해야 합니다.
+nodeSelector:
+  capacity: on-demand
+
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "critical"
+    effect: "NoSchedule"
+  - key: "node-role"
+    operator: "Equal"
+    value: "core"
+    effect: "NoSchedule"
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+
+# 4. 사용자 정의 보안 규칙
+customRules:
+  custom-rules.yaml: |-
+    - rule: Terminal shell in container
+      desc: A shell was used as the entrypoint/exec point into a container with an attached terminal.
+      condition: >
+        spawned_process and container
+        and shell_procs and proc.tty != 0
+        and container_entrypoint
+        and not user_expected_terminal_shell_in_container_conditions
+      output: >
+        A shell was spawned in a container with an attached terminal (user=%user.name %container.info
+        shell=%proc.name parent=%proc.pname cmdline=%proc.cmdline terminal=%proc.tty)
+      priority: WARNING
+      tags: [container, shell, mitre_execution]
+    
+    - rule: Read sensitive file in container
+      desc: Detect reads of sensitive files
+      condition: >
+        open_read and container and
+        fd.name in (/etc/shadow, /etc/sudoers, /root/.ssh/id_rsa)
+      output: >
+        Sensitive file opened for reading (user=%user.name command=%proc.cmdline 
+        file=%fd.name container_id=%container.id image=%container.image.repository)
+      priority: EMERGENCY
+      tags: [container, filesystem, mitre_credential_access]

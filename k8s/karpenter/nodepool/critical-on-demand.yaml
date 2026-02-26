@@ -1,0 +1,45 @@
+# external-dns, metrics-server, falco 등을 위한 nodepool
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: critical-on-demand
+spec:
+  template:
+    metadata:
+      labels:
+        workload: critical # 파드들이 찾아올 이름표
+        capacity: on-demand
+    spec:
+      taints:
+        - key: workload
+          value: critical
+          effect: NoSchedule
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"] # 👈 AMD(x86_64)로 고정
+        - key: "karpenter.k8s.aws/instance-category"
+          operator: In
+          values: ["c","m"]
+          #values: ["t", "m"] # 👈 r(메모리 특화)은 빼고, 저렴한 t 시리즈 추가
+        - key: "karpenter.k8s.aws/instance-size"
+          operator: In
+          values: ["xlarge"] # 👈 너무 작지도 크지도 않은 적당한 사이즈
+          #values: ["medium", "large"] # 👈 핵심! xlarge 이상의 비싼 노드 차단
+        - key: "karpenter.k8s.aws/instance-generation"
+          operator: Gt
+          values: ["2"] # 가성비 좋은 4세대 이후 모델
+          #values: ["5"] # 가성비 좋은 4세대 이후 모델
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m #30m # 비어있어도 30분은 기다려줌
+  limits:
+    cpu: 1000   # 500에서 1000으로 상향 (필요시 더 높게)
+    memory: 2000Gi # 메모리 리미트도 함께 설정하는 것이 안전합니다.

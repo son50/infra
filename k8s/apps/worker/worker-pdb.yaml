@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: spring-worker-pdb
+  namespace: default
+spec:
+  # [수정] 1개뿐인 파드가 이사 갈 수 있도록 최대 1개의 불능 상태를 허용함
+  maxUnavailable: 1 
+  selector:
+    matchLabels:
+      app: spring-worker

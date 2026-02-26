@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-critical-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: spring-critical-api
+  template:
+    metadata:
+      labels:
+        app: spring-critical-api
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: critical-on-demand
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "critical"
+        effect: "NoSchedule"
+      containers:
+      - name: backend
+        # 나중에 실제 빌드된 이미지로 교체 (예: myrepo/spring-critical-api:latest)
+        image: 843499162538.dkr.ecr.ap-northeast-2.amazonaws.com/prd-oy-ecr-backend-01:dfff2aa8
+        ports:
+        - containerPort: 8080
+        
+        # [추가] HPA 작동을 위한 리소스 할당량 설정
+        # HPA는 여기서 설정한 requests 값을 기준으로 사용량을 계산해 (예: 500m의 60% 사용 시 증설)
+        # resources:
+        #   requests:
+        #     cpu: "100m"      # 0.5 코어 예약 (HPA 계산 기준점)
+        #     memory: "400Mi"    # 1GB 메모리 예약
+        #   limits:
+        #     cpu: "500m"     # 최대 1 코어까지 사용 허용
+        #     memory: "512Mi"    # 최대 2GB까지 사용 허용
+            
+        resources:
+          requests:
+            cpu: "1000m"      # 0.5 코어 보장 (HPA가 이 값을 기준으로 계산)
+            memory: "1Gi"  # JVM 힙과 여유 공간 확보
+          limits:
+            cpu: "3000m"     # 중요: 부하 시 최대 2 코어까지 연산력 폭발 허용
+            memory: "2Gi"  # 메모리 부족(OOM)으로 파드가 죽는 것 방지 
+
+        env:
+        - name: JAVA_TOOL_OPTIONS
+          value: "-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=75.0"
+        - name: APP_ROLE
+          value: "critical-api"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "critical-api"
+        - name: LISTENER_ENABLED
+          value: "false"
+          
+        - name: SQS_CRITICAL_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-critical-queue.fifo"
+        - name: SQS_DEFAULT_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-default-queue"
+        - name: SQS_AI_QUEUE_URL
+          value: "https://sqs.ap-northeast-2.amazonaws.com/843499162538/worker-ai-queue"
+
+        
+        # DB 연결 설정
+        - name: DB_PRIMARY_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: primary_host } }
+        - name: DB_REPLICA_HOST
+          valueFrom: { secretKeyRef: { name: db-credentials, key: replica_host } }
+        - name: DB_PORT
+          valueFrom: { secretKeyRef: { name: db-credentials, key: port } }
+        - name: DB_NAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: database } }
+        - name: DB_USERNAME
+          valueFrom: { secretKeyRef: { name: db-credentials, key: username } }
+        - name: DB_PASSWORD
+          valueFrom: { secretKeyRef: { name: db-credentials, key: password } }
+        
+        # Redis 및 보안 설정
+        - name: REDIS_HOST
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: host } }
+        - name: REDIS_PORT
+          valueFrom: { secretKeyRef: { name: redis-credentials, key: port } }
+        - name: JWT_SECRET
+          valueFrom: { secretKeyRef: { name: jwt-credentials, key: secret } }
+
+        # JPA 및 CORS 공통 설정
+        - name: JPA_DDL_AUTO
+          valueFrom: { configMapKeyRef: { name: backend-config, key: JPA_DDL_AUTO } }
+        - name: JPA_SHOW_SQL
+          valueFrom: { configMapKeyRef: { name: backend-config, key: JPA_SHOW_SQL } }
+        - name: CORS_ALLOWED_ORIGINS
+          valueFrom: { configMapKeyRef: { name: backend-config, key: CORS_ALLOWED_ORIGINS } }
+        
+          
+        # --- Probe: 서비스 안정성 체크 ---
+        # Readiness: 트래픽을 받을 준비가 되었는가? (통과 못 하면 로드밸런서에서 제외)
+        readinessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 30 # 앱 실행 후 30초 뒤부터 체크
+          periodSeconds: 5        # 더 자주 체크해서 (5초마다)
+          successThreshold: 1     # 1번만 성공하면 바로 투입 (기본값)
+          failureThreshold: 3
+          
+        # Liveness: 앱이 살아있는가? (통과 못 하면 파드 강제 재시작)
+        livenessProbe:
+          httpGet: { path: /actuator/health, port: 8080 }
+          initialDelaySeconds: 70 # 앱 실행 후 60초 뒤부터 체크
+          periodSeconds: 20      # 15초마다 반복 체크
+          timeoutSeconds: 5      # 1초에서 5초로 상향 (대답 기다려주기)
+          failureThreshold: 5    # 3번 실패가 아니라 5번까지는 봐주기
