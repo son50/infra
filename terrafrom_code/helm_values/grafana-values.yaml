@@ -1,0 +1,37 @@
+# Grafana UI — Loki / Prometheus / Tempo 데이터소스 (monitoring 네임스페이스 서비스명 기준)
+persistence:
+  enabled: true
+  type: pvc
+  size: 10Gi
+  storageClassName: gp3
+
+# # 이사 설정 추가 (Karpenter monitoring 노드풀·taint 쓸 때만 주석 해제)
+# nodeSelector:
+#   karpenter.sh/nodepool: monitoring
+#
+# tolerations:
+#   - key: "workload"
+#     operator: "Equal"
+#     value: "monitoring"
+#     effect: "NoSchedule"
+
+adminUser: admin
+# adminPassword: 비우면 차트가 랜덤 생성 — 프로덕션은 Secret/외부 주입 권장
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server
+        access: proxy
+        isDefault: true
+      - name: Loki
+        type: loki
+        url: http://loki:3100
+        access: proxy
+      - name: Tempo
+        type: tempo
+        url: http://tempo:3100
+        access: proxy

@@ -1,1 +1,9 @@
 envs/.env.*
+
+# Terraform runtime artifacts (never commit)
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+
+# Local-only tfvars (keep secrets out of git)
+**/terraform.tfvars
